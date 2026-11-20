@@ -1,5 +1,4 @@
 using AssetRipper.TextureDecoder.Rgb;
-using AssetRipper.TextureDecoder.Rgb.Formats;
 using System.Buffers.Binary;
 using System.Diagnostics;
 
@@ -41,20 +40,20 @@ namespace AssetRipper.TextureDecoder.Astc
 			int bcw = (width + blockWidth - 1) / blockWidth;
 			int bch = (height + blockHeight - 1) / blockHeight;
 			int clen_last = (width + blockWidth - 1) % blockWidth + 1;
-			Span<ColorRGBA<byte>> buffer = stackalloc ColorRGBA<byte>[blockWidth * blockHeight];
+			Span<TOutputColor> buffer = stackalloc TOutputColor[blockWidth * blockHeight];
 			int inputOffset = 0;
 			for (int t = 0; t < bch; t++)
 			{
 				for (int s = 0; s < bcw; s++, inputOffset += 16)
 				{
-					DecodeBlock(input[inputOffset..], blockWidth, blockHeight, buffer);
+					DecodeBlock<TOutputColor, TOutputChannelValue>(input[inputOffset..], blockWidth, blockHeight, buffer);
 					int clen = s < bcw - 1 ? blockWidth : clen_last;
 					for (int i = 0, y = t * blockHeight; i < blockHeight && y < height; i++, y++)
 					{
 						int outputOffsetUInt32 = t * blockHeight * width + s * blockWidth + i * width;
 						for (int j = 0; j < clen; j++)
 						{
-							output[outputOffsetUInt32 + j] = buffer[j + i * blockWidth].Convert<ColorRGBA<byte>, byte, TOutputColor, TOutputChannelValue>();
+							output[outputOffsetUInt32 + j] = buffer[j + i * blockWidth];
 						}
 					}
 				}
@@ -62,11 +61,34 @@ namespace AssetRipper.TextureDecoder.Astc
 			return inputOffset;
 		}
 
-		private static void DecodeBlock(ReadOnlySpan<byte> input, int blockWidth, int blockHeight, Span<ColorRGBA<byte>> output)
+		private static void DecodeBlock<TOutputColor, TOutputChannelValue>(ReadOnlySpan<byte> input, int blockWidth, int blockHeight, Span<TOutputColor> output)
+			where TOutputChannelValue : unmanaged
+			where TOutputColor : unmanaged, IColor<TOutputChannelValue>
 		{
 			if (input[0] == 0xfc && (input[1] & 1) == 1)
 			{
-				ColorRGBA<byte> c = new(input[9], input[11], input[13], input[15]);
+				// Constant color block, officially called a "void extent" block
+				TOutputColor c = default;
+
+				// Check what format the data has
+				if ((input[1] & 2) == 0)
+				{
+					// U16
+					c.SetConvertedChannels<TOutputColor, TOutputChannelValue, ushort>(
+						BinaryPrimitives.ReadUInt16LittleEndian(input[8..]),
+						BinaryPrimitives.ReadUInt16LittleEndian(input[10..]),
+						BinaryPrimitives.ReadUInt16LittleEndian(input[12..]),
+						BinaryPrimitives.ReadUInt16LittleEndian(input[14..]));
+				}
+				else
+				{
+					// F16
+					c.SetConvertedChannels<TOutputColor, TOutputChannelValue, Half>(
+						BinaryPrimitives.ReadHalfLittleEndian(input[8..]),
+						BinaryPrimitives.ReadHalfLittleEndian(input[10..]),
+						BinaryPrimitives.ReadHalfLittleEndian(input[12..]),
+						BinaryPrimitives.ReadHalfLittleEndian(input[14..]));
+				}
 				output[..(blockWidth * blockHeight)].Fill(c);
 			}
 			else
@@ -81,7 +103,7 @@ namespace AssetRipper.TextureDecoder.Astc
 				{
 					SelectPartition(input, ref blockData);
 				}
-				ApplicateColor(blockData, output);
+				ApplicateColor<TOutputColor, TOutputChannelValue>(blockData, output);
 			}
 		}
 
@@ -681,7 +703,9 @@ namespace AssetRipper.TextureDecoder.Astc
 			}
 		}
 
-		private static void ApplicateColor(BlockData block, Span<ColorRGBA<byte>> output)
+		private static void ApplicateColor<TOutputColor, TOutputChannelValue>(BlockData block, Span<TOutputColor> output)
+			where TOutputChannelValue : unmanaged
+			where TOutputColor : unmanaged, IColor<TOutputChannelValue>
 		{
 			if (block.dual_plane != 0)
 			{
@@ -692,22 +716,22 @@ namespace AssetRipper.TextureDecoder.Astc
 					for (int i = 0; i < block.bw * block.bh; i++)
 					{
 						int p = block.partition[i];
-						byte r = SelectColor(block.endpoints[p][0], block.endpoints[p][4], block.weights[i * 2 + ps[0]]);
-						byte g = SelectColor(block.endpoints[p][1], block.endpoints[p][5], block.weights[i * 2 + ps[1]]);
-						byte b = SelectColor(block.endpoints[p][2], block.endpoints[p][6], block.weights[i * 2 + ps[2]]);
-						byte a = SelectColor(block.endpoints[p][3], block.endpoints[p][7], block.weights[i * 2 + ps[3]]);
-						output[i] = new(r, g, b, a);
+						TOutputChannelValue r = SelectColor(block.endpoints[p][0], block.endpoints[p][4], block.weights[i * 2 + ps[0]]);
+						TOutputChannelValue g = SelectColor(block.endpoints[p][1], block.endpoints[p][5], block.weights[i * 2 + ps[1]]);
+						TOutputChannelValue b = SelectColor(block.endpoints[p][2], block.endpoints[p][6], block.weights[i * 2 + ps[2]]);
+						TOutputChannelValue a = SelectColor(block.endpoints[p][3], block.endpoints[p][7], block.weights[i * 2 + ps[3]]);
+						output[i].SetChannels(r, g, b, a);
 					}
 				}
 				else
 				{
 					for (int i = 0; i < block.bw * block.bh; i++)
 					{
-						byte r = SelectColor(block.endpoints[0][0], block.endpoints[0][4], block.weights[i * 2 + ps[0]]);
-						byte g = SelectColor(block.endpoints[0][1], block.endpoints[0][5], block.weights[i * 2 + ps[1]]);
-						byte b = SelectColor(block.endpoints[0][2], block.endpoints[0][6], block.weights[i * 2 + ps[2]]);
-						byte a = SelectColor(block.endpoints[0][3], block.endpoints[0][7], block.weights[i * 2 + ps[3]]);
-						output[i] = new(r, g, b, a);
+						TOutputChannelValue r = SelectColor(block.endpoints[0][0], block.endpoints[0][4], block.weights[i * 2 + ps[0]]);
+						TOutputChannelValue g = SelectColor(block.endpoints[0][1], block.endpoints[0][5], block.weights[i * 2 + ps[1]]);
+						TOutputChannelValue b = SelectColor(block.endpoints[0][2], block.endpoints[0][6], block.weights[i * 2 + ps[2]]);
+						TOutputChannelValue a = SelectColor(block.endpoints[0][3], block.endpoints[0][7], block.weights[i * 2 + ps[3]]);
+						output[i].SetChannels(r, g, b, a);
 					}
 				}
 			}
@@ -716,23 +740,34 @@ namespace AssetRipper.TextureDecoder.Astc
 				for (int i = 0; i < block.bw * block.bh; i++)
 				{
 					int p = block.partition[i];
-					byte r = SelectColor(block.endpoints[p][0], block.endpoints[p][4], block.weights[i * 2]);
-					byte g = SelectColor(block.endpoints[p][1], block.endpoints[p][5], block.weights[i * 2]);
-					byte b = SelectColor(block.endpoints[p][2], block.endpoints[p][6], block.weights[i * 2]);
-					byte a = SelectColor(block.endpoints[p][3], block.endpoints[p][7], block.weights[i * 2]);
-					output[i] = new(r, g, b, a);
+					TOutputChannelValue r = SelectColor(block.endpoints[p][0], block.endpoints[p][4], block.weights[i * 2]);
+					TOutputChannelValue g = SelectColor(block.endpoints[p][1], block.endpoints[p][5], block.weights[i * 2]);
+					TOutputChannelValue b = SelectColor(block.endpoints[p][2], block.endpoints[p][6], block.weights[i * 2]);
+					TOutputChannelValue a = SelectColor(block.endpoints[p][3], block.endpoints[p][7], block.weights[i * 2]);
+					output[i].SetChannels(r, g, b, a);
 				}
 			}
 			else
 			{
 				for (int i = 0; i < block.bw * block.bh; i++)
 				{
-					byte r = SelectColor(block.endpoints[0][0], block.endpoints[0][4], block.weights[i * 2]);
-					byte g = SelectColor(block.endpoints[0][1], block.endpoints[0][5], block.weights[i * 2]);
-					byte b = SelectColor(block.endpoints[0][2], block.endpoints[0][6], block.weights[i * 2]);
-					byte a = SelectColor(block.endpoints[0][3], block.endpoints[0][7], block.weights[i * 2]);
-					output[i] = new(r, g, b, a);
+					TOutputChannelValue r = SelectColor(block.endpoints[0][0], block.endpoints[0][4], block.weights[i * 2]);
+					TOutputChannelValue g = SelectColor(block.endpoints[0][1], block.endpoints[0][5], block.weights[i * 2]);
+					TOutputChannelValue b = SelectColor(block.endpoints[0][2], block.endpoints[0][6], block.weights[i * 2]);
+					TOutputChannelValue a = SelectColor(block.endpoints[0][3], block.endpoints[0][7], block.weights[i * 2]);
+					output[i].SetChannels(r, g, b, a);
 				}
+			}
+
+			static TOutputChannelValue SelectColor(int v0, int v1, int weight)
+			{
+				Debug.Assert(weight is >= 0 and <= 64);
+				Debug.Assert(v0 is >= byte.MinValue and <= byte.MaxValue);
+				Debug.Assert(v1 is >= byte.MinValue and <= byte.MaxValue);
+				int v0_weighted = (v0 << 8 | v0) * (64 - weight);
+				int v1_weighted = (v1 << 8 | v1) * weight;
+				ushort value = (ushort)(v0_weighted + v1_weighted + 32 >> 6);
+				return NumericConversion.Convert<ushort, TOutputChannelValue>(value);
 			}
 		}
 
@@ -1010,14 +1045,6 @@ namespace AssetRipper.TextureDecoder.Astc
 			endpoint[5] = Clamp((g2 + b2) >> 1);
 			endpoint[6] = Clamp(b2);
 			endpoint[7] = Clamp(a2);
-		}
-
-		[MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-		private static byte SelectColor(int v0, int v1, int weight)
-		{
-			const int SignAdjustment = short.MaxValue + 1;
-			const int MaxValue = ushort.MaxValue + 1;
-			return (byte)(((((v0 << 8 | v0) * (64 - weight) + (v1 << 8 | v1) * weight + 32) >> 6) * byte.MaxValue + SignAdjustment) / MaxValue);
 		}
 
 		private static ReadOnlySpan<byte> BitReverseTable =>
