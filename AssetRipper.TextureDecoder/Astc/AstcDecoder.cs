@@ -711,7 +711,7 @@ namespace AssetRipper.TextureDecoder.Astc
 					}
 				}
 			}
-			else if (block.part_num > 1)
+			else if (block.partition_count > 1)
 			{
 				for (int i = 0; i < block.bw * block.bh; i++)
 				{
