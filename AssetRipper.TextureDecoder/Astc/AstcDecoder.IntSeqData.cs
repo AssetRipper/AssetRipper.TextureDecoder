@@ -2,7 +2,7 @@
 
 public static partial class AstcDecoder
 {
-	private struct IntSeqData
+	private record struct IntSeqData
 	{
 		public int bits;
 		public int nonbits;

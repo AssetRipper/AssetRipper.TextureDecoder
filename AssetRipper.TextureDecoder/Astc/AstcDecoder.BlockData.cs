@@ -8,14 +8,14 @@ public static partial class AstcDecoder
 		public int bh;
 		public int width;
 		public int height;
-		public int part_num;
+		public int partition_count;
 		public int dual_plane;
 		public int plane_selector;
 		public int weight_range;
 		/// <summary>
 		/// max: 120
 		/// </summary>
-		public int weight_num;
+		public int weight_count;
 		public IntBuffer4 cem;
 		public int cem_range;
 		/// <summary>

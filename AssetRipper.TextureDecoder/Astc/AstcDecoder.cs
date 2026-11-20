@@ -76,7 +76,7 @@ namespace AssetRipper.TextureDecoder.Astc
 				DecodeBlockParameters(input, ref blockData);
 				DecodeEndpoints(input, ref blockData);
 				DecodeWeights(input, ref blockData);
-				if (blockData.part_num > 1)
+				if (blockData.partition_count > 1)
 				{
 					SelectPartition(input, ref blockData);
 				}
@@ -94,19 +94,19 @@ namespace AssetRipper.TextureDecoder.Astc
 				pBlock.weight_range |= input[0] << 1 & 6;
 				switch (input[0] & 0xc)
 				{
-					case 0:
+					case 0x0:
 						pBlock.width = (BinaryPrimitives.ReadInt32LittleEndian(input) >> 7 & 3) + 4;
 						pBlock.height = (input[0] >> 5 & 3) + 2;
 						break;
-					case 4:
+					case 0x4:
 						pBlock.width = (BinaryPrimitives.ReadInt32LittleEndian(input) >> 7 & 3) + 8;
 						pBlock.height = (input[0] >> 5 & 3) + 2;
 						break;
-					case 8:
+					case 0x8:
 						pBlock.width = (input[0] >> 5 & 3) + 2;
 						pBlock.height = (BinaryPrimitives.ReadInt32LittleEndian(input) >> 7 & 3) + 8;
 						break;
-					case 12:
+					case 0xc:
 						if ((input[1] & 1) != 0)
 						{
 							pBlock.width = (input[0] >> 7 & 1) + 2;
@@ -125,11 +125,11 @@ namespace AssetRipper.TextureDecoder.Astc
 				pBlock.weight_range |= input[0] >> 1 & 6;
 				switch (BinaryPrimitives.ReadInt32LittleEndian(input) & 0x180)
 				{
-					case 0:
+					case 0x000:
 						pBlock.width = 12;
 						pBlock.height = (input[0] >> 5 & 3) + 2;
 						break;
-					case 0x80:
+					case 0x080:
 						pBlock.width = (input[0] >> 5 & 3) + 2;
 						pBlock.height = 12;
 						break;
@@ -146,22 +146,22 @@ namespace AssetRipper.TextureDecoder.Astc
 				}
 			}
 
-			pBlock.part_num = (input[1] >> 3 & 3) + 1;
+			pBlock.partition_count = (input[1] >> 3 & 3) + 1;
 
-			pBlock.weight_num = pBlock.width * pBlock.height;
+			pBlock.weight_count = pBlock.width * pBlock.height;
 			if (pBlock.dual_plane != 0)
 			{
-				pBlock.weight_num *= 2;
+				pBlock.weight_count *= 2;
 			}
 
 			int config_bits, cem_base = 0;
 			int weight_bits = WeightPrecTableA[pBlock.weight_range] switch
 			{
-				3 => pBlock.weight_num * WeightPrecTableB[pBlock.weight_range] + (pBlock.weight_num * 8 + 4) / 5,
-				5 => pBlock.weight_num * WeightPrecTableB[pBlock.weight_range] + (pBlock.weight_num * 7 + 2) / 3,
-				_ => pBlock.weight_num * WeightPrecTableB[pBlock.weight_range],
+				3 => pBlock.weight_count * WeightPrecTableB[pBlock.weight_range] + (pBlock.weight_count * 8 + 4) / 5,
+				5 => pBlock.weight_count * WeightPrecTableB[pBlock.weight_range] + (pBlock.weight_count * 7 + 2) / 3,
+				_ => pBlock.weight_count * WeightPrecTableB[pBlock.weight_range],
 			};
-			if (pBlock.part_num == 1)
+			if (pBlock.partition_count == 1)
 			{
 				pBlock.cem[0] = BinaryPrimitives.ReadInt32LittleEndian(input[1..]) >> 5 & 0xf;
 				config_bits = 17;
@@ -172,7 +172,7 @@ namespace AssetRipper.TextureDecoder.Astc
 				if (cem_base == 0)
 				{
 					int cem = input[3] >> 1 & 0xf;
-					for (int i = 0; i < pBlock.part_num; i++)
+					for (int i = 0; i < pBlock.partition_count; i++)
 					{
 						pBlock.cem[i] = cem;
 					}
@@ -180,11 +180,11 @@ namespace AssetRipper.TextureDecoder.Astc
 				}
 				else
 				{
-					for (int i = 0; i < pBlock.part_num; i++)
+					for (int i = 0; i < pBlock.partition_count; i++)
 					{
 						pBlock.cem[i] = ((input[3] >> (i + 1) & 1) + cem_base - 1) << 2;
 					}
-					switch (pBlock.part_num)
+					switch (pBlock.partition_count)
 					{
 						case 2:
 							pBlock.cem[0] |= input[3] >> 3 & 3;
@@ -203,20 +203,20 @@ namespace AssetRipper.TextureDecoder.Astc
 							}
 							break;
 					}
-					config_bits = 25 + pBlock.part_num * 3;
+					config_bits = 25 + pBlock.partition_count * 3;
 				}
 			}
 
 			if (pBlock.dual_plane != 0)
 			{
 				config_bits += 2;
-				pBlock.plane_selector = GetBits(input, cem_base != 0 ? 130 - weight_bits - pBlock.part_num * 3 : 126 - weight_bits, 2);
+				pBlock.plane_selector = GetBits(input, cem_base != 0 ? 130 - weight_bits - pBlock.partition_count * 3 : 126 - weight_bits, 2);
 			}
 
 			int remain_bits = 128 - config_bits - weight_bits;
 
 			pBlock.endpoint_value_num = 0;
-			for (int i = 0; i < pBlock.part_num; i++)
+			for (int i = 0; i < pBlock.partition_count; i++)
 			{
 				pBlock.endpoint_value_num += (pBlock.cem[i] >> 1 & 6) + 2;
 			}
@@ -240,7 +240,7 @@ namespace AssetRipper.TextureDecoder.Astc
 		private static void DecodeEndpoints(ReadOnlySpan<byte> input, ref BlockData pBlock)
 		{
 			Span<IntSeqData> epSeq = stackalloc IntSeqData[32];
-			DecodeIntseq(input, pBlock.part_num == 1 ? 17 : 29, CemTableA[pBlock.cem_range], CemTableB[pBlock.cem_range], pBlock.endpoint_value_num, false, epSeq);
+			DecodeIntseq(input, pBlock.partition_count == 1 ? 17 : 29, CemTableA[pBlock.cem_range], CemTableB[pBlock.cem_range], pBlock.endpoint_value_num, false, epSeq);
 
 			Span<int> ev = stackalloc int[32];
 			switch (CemTableA[pBlock.cem_range])
@@ -358,7 +358,7 @@ namespace AssetRipper.TextureDecoder.Astc
 			}
 
 			Span<int> v = ev;
-			for (int cem = 0; cem < pBlock.part_num; v = v.Slice((pBlock.cem[cem] / 4 + 1) * 2), cem++)
+			for (int cem = 0; cem < pBlock.partition_count; v = v.Slice((pBlock.cem[cem] / 4 + 1) * 2), cem++)
 			{
 				switch (pBlock.cem[cem])
 				{
@@ -445,7 +445,7 @@ namespace AssetRipper.TextureDecoder.Astc
 		private static void DecodeWeights(ReadOnlySpan<byte> input, ref BlockData block)
 		{
 			Span<IntSeqData> wSeq = stackalloc IntSeqData[128];
-			DecodeIntseq(input, 128, WeightPrecTableA[block.weight_range], WeightPrecTableB[block.weight_range], block.weight_num, true, wSeq);
+			DecodeIntseq(input, 128, WeightPrecTableA[block.weight_range], WeightPrecTableB[block.weight_range], block.weight_count, true, wSeq);
 
 			Span<int> wv = stackalloc int[128];
 			if (WeightPrecTableA[block.weight_range] == 0)
@@ -453,42 +453,42 @@ namespace AssetRipper.TextureDecoder.Astc
 				switch (WeightPrecTableB[block.weight_range])
 				{
 					case 1:
-						for (int i = 0; i < block.weight_num; i++)
+						for (int i = 0; i < block.weight_count; i++)
 						{
 							wv[i] = wSeq[i].bits != 0 ? 63 : 0;
 						}
 
 						break;
 					case 2:
-						for (int i = 0; i < block.weight_num; i++)
+						for (int i = 0; i < block.weight_count; i++)
 						{
 							wv[i] = wSeq[i].bits << 4 | wSeq[i].bits << 2 | wSeq[i].bits;
 						}
 
 						break;
 					case 3:
-						for (int i = 0; i < block.weight_num; i++)
+						for (int i = 0; i < block.weight_count; i++)
 						{
 							wv[i] = wSeq[i].bits << 3 | wSeq[i].bits;
 						}
 
 						break;
 					case 4:
-						for (int i = 0; i < block.weight_num; i++)
+						for (int i = 0; i < block.weight_count; i++)
 						{
 							wv[i] = wSeq[i].bits << 2 | wSeq[i].bits >> 2;
 						}
 
 						break;
 					case 5:
-						for (int i = 0; i < block.weight_num; i++)
+						for (int i = 0; i < block.weight_count; i++)
 						{
 							wv[i] = wSeq[i].bits << 1 | wSeq[i].bits >> 4;
 						}
 
 						break;
 				}
-				for (int i = 0; i < block.weight_num; i++)
+				for (int i = 0; i < block.weight_count; i++)
 				{
 					if (wv[i] > 32)
 					{
@@ -499,7 +499,7 @@ namespace AssetRipper.TextureDecoder.Astc
 			else if (WeightPrecTableB[block.weight_range] == 0)
 			{
 				int s = WeightPrecTableA[block.weight_range] == 3 ? 32 : 16;
-				for (int i = 0; i < block.weight_num; i++)
+				for (int i = 0; i < block.weight_count; i++)
 				{
 					wv[i] = wSeq[i].nonbits * s;
 				}
@@ -511,13 +511,13 @@ namespace AssetRipper.TextureDecoder.Astc
 					switch (WeightPrecTableB[block.weight_range])
 					{
 						case 1:
-							for (int i = 0; i < block.weight_num; i++)
+							for (int i = 0; i < block.weight_count; i++)
 							{
 								wv[i] = wSeq[i].nonbits * 50;
 							}
 							break;
 						case 2:
-							for (int i = 0; i < block.weight_num; i++)
+							for (int i = 0; i < block.weight_count; i++)
 							{
 								wv[i] = wSeq[i].nonbits * 23;
 								if ((wSeq[i].bits & 2) != 0)
@@ -527,7 +527,7 @@ namespace AssetRipper.TextureDecoder.Astc
 							}
 							break;
 						case 3:
-							for (int i = 0; i < block.weight_num; i++)
+							for (int i = 0; i < block.weight_count; i++)
 							{
 								wv[i] = wSeq[i].nonbits * 11 + ((wSeq[i].bits << 4 | wSeq[i].bits >> 1) & 0b1100011);
 							}
@@ -539,14 +539,14 @@ namespace AssetRipper.TextureDecoder.Astc
 					switch (WeightPrecTableB[block.weight_range])
 					{
 						case 1:
-							for (int i = 0; i < block.weight_num; i++)
+							for (int i = 0; i < block.weight_count; i++)
 							{
 								wv[i] = wSeq[i].nonbits * 28;
 							}
 
 							break;
 						case 2:
-							for (int i = 0; i < block.weight_num; i++)
+							for (int i = 0; i < block.weight_count; i++)
 							{
 								wv[i] = wSeq[i].nonbits * 13;
 								if ((wSeq[i].bits & 2) != 0)
@@ -557,7 +557,7 @@ namespace AssetRipper.TextureDecoder.Astc
 							break;
 					}
 				}
-				for (int i = 0; i < block.weight_num; i++)
+				for (int i = 0; i < block.weight_count; i++)
 				{
 					int a = (wSeq[i].bits & 1) * 0x7f;
 					wv[i] = (a & 0x20) | ((wv[i] ^ a) >> 2);
@@ -601,7 +601,7 @@ namespace AssetRipper.TextureDecoder.Astc
 		private static void SelectPartition(ReadOnlySpan<byte> input, ref BlockData block)
 		{
 			bool small_block = block.bw * block.bh < 31;
-			int seed = (BinaryPrimitives.ReadInt32LittleEndian(input) >> 13 & 0x3ff) | (block.part_num - 1) << 10;
+			int seed = (BinaryPrimitives.ReadInt32LittleEndian(input) >> 13 & 0x3ff) | (block.partition_count - 1) << 10;
 
 			uint rnum;
 			unchecked
@@ -630,7 +630,7 @@ namespace AssetRipper.TextureDecoder.Astc
 			ReadOnlySpan<int> sh =
 			[
 				(seed & 2) != 0 ? 4 : 5,
-				block.part_num == 3 ? 6 : 5
+				block.partition_count == 3 ? 6 : 5
 			];
 
 			if ((seed & 1) != 0)
@@ -658,8 +658,8 @@ namespace AssetRipper.TextureDecoder.Astc
 						int y = t << 1;
 						int a = (int)((seeds[0] * x + seeds[1] * y + (rnum >> 14)) & 0x3f);
 						int b = (int)((seeds[2] * x + seeds[3] * y + (rnum >> 10)) & 0x3f);
-						int c = (int)(block.part_num < 3 ? 0 : (seeds[4] * x + seeds[5] * y + (rnum >> 6)) & 0x3f);
-						int d = (int)(block.part_num < 4 ? 0 : (seeds[6] * x + seeds[7] * y + (rnum >> 2)) & 0x3f);
+						int c = (int)(block.partition_count < 3 ? 0 : (seeds[4] * x + seeds[5] * y + (rnum >> 6)) & 0x3f);
+						int d = (int)(block.partition_count < 4 ? 0 : (seeds[6] * x + seeds[7] * y + (rnum >> 2)) & 0x3f);
 						block.partition[i] = (a >= b && a >= c && a >= d) ? 0 : (b >= c && b >= d) ? 1 : (c >= d) ? 2 : 3;
 					}
 				}
@@ -672,8 +672,8 @@ namespace AssetRipper.TextureDecoder.Astc
 					{
 						int a = (int)((seeds[0] * x + seeds[1] * y + (rnum >> 14)) & 0x3f);
 						int b = (int)((seeds[2] * x + seeds[3] * y + (rnum >> 10)) & 0x3f);
-						int c = (int)(block.part_num < 3 ? 0 : (seeds[4] * x + seeds[5] * y + (rnum >> 6)) & 0x3f);
-						int d = (int)(block.part_num < 4 ? 0 : (seeds[6] * x + seeds[7] * y + (rnum >> 2)) & 0x3f);
+						int c = (int)(block.partition_count < 3 ? 0 : (seeds[4] * x + seeds[5] * y + (rnum >> 6)) & 0x3f);
+						int d = (int)(block.partition_count < 4 ? 0 : (seeds[6] * x + seeds[7] * y + (rnum >> 2)) & 0x3f);
 						block.partition[i] = (a >= b && a >= c && a >= d) ? 0 : (b >= c && b >= d) ? 1 : (c >= d) ? 2 : 3;
 					}
 				}
@@ -686,7 +686,7 @@ namespace AssetRipper.TextureDecoder.Astc
 			{
 				Span<int> ps = [0, 0, 0, 0];
 				ps[block.plane_selector] = 1;
-				if (block.part_num > 1)
+				if (block.partition_count > 1)
 				{
 					for (int i = 0; i < block.bw * block.bh; i++)
 					{
