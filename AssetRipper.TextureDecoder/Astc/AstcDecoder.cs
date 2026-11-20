@@ -1,6 +1,7 @@
 using AssetRipper.TextureDecoder.Rgb;
 using AssetRipper.TextureDecoder.Rgb.Formats;
 using System.Buffers.Binary;
+using System.Diagnostics;
 
 namespace AssetRipper.TextureDecoder.Astc
 {
@@ -883,24 +884,37 @@ namespace AssetRipper.TextureDecoder.Astc
 		[MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
 		private static int GetBits(ReadOnlySpan<byte> input, int bit, int len)
 		{
-			if (bit < 0 || input.Length * 8 < bit + len)
+			Debug.Assert(len <= 24);
+			if (!HasEnoughBits(input, bit, len))
 			{
 				// Invalid input, but we should return something instead of throwing an exception
 				return default;
 			}
 			ReadOnlySpan<byte> slice = input[(bit / 8)..];
-			int bitBuffer;
-			if (slice.Length >= sizeof(int))
+			uint bitBuffer;
+			if (slice.Length >= sizeof(uint))
 			{
-				bitBuffer = BinaryPrimitives.ReadInt32LittleEndian(slice);
+				bitBuffer = BinaryPrimitives.ReadUInt32LittleEndian(slice);
 			}
 			else
 			{
-				Span<byte> temp = stackalloc byte[sizeof(int)];
+				Span<byte> temp = [0, 0, 0, 0];
 				slice.CopyTo(temp);
-				bitBuffer = BinaryPrimitives.ReadInt32LittleEndian(temp);
+				bitBuffer = BinaryPrimitives.ReadUInt32LittleEndian(temp);
 			}
-			return (bitBuffer >> (bit % 8)) & ((1 << len) - 1);
+			uint mask = uint.MaxValue >> (32 - len);
+			uint result = (bitBuffer >> (bit % 8)) & mask;
+			return unchecked((int)result);
+
+			static bool HasEnoughBits(ReadOnlySpan<byte> input, int bit, int len)
+			{
+				if (bit < 0 || len <= 0)
+				{
+					return false;
+				}
+				int bytesNeeded = (bit / 8) + ((bit % 8 + len + 7) / 8);
+				return input.Length >= bytesNeeded;
+			}
 		}
 
 		[MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
