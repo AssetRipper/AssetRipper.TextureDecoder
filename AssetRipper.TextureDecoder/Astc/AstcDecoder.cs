@@ -50,7 +50,7 @@ namespace AssetRipper.TextureDecoder.Astc
 			{
 				for (int s = 0; s < bcw; s++, inputOffset += 16)
 				{
-					DecodeBlock<TOutputColor, TOutputChannelValue>(input[inputOffset..], blockWidth, blockHeight, buffer);
+					DecodeBlock<TOutputColor, TOutputChannelValue>(input.Slice(inputOffset, 16), blockWidth, blockHeight, buffer);
 					int clen = s < bcw - 1 ? blockWidth : clen_last;
 					for (int i = 0, y = t * blockHeight; i < blockHeight && y < height; i++, y++)
 					{
@@ -71,6 +71,17 @@ namespace AssetRipper.TextureDecoder.Astc
 		{
 			if (input[0] == 0xfc && (input[1] & 1) == 1)
 			{
+				int lowS = GetBits(input, 12, 13);
+				int highS = GetBits(input, 25, 13);
+				int lowT = GetBits(input, 38, 13);
+				int highT = GetBits(input, 51, 13);
+				bool allOnes = lowS == 0x1fff && highS == 0x1fff && lowT == 0x1fff && highT == 0x1fff;
+				if ((input[1] & 0x0c) != 0x0c || (!allOnes && (lowS >= highS || lowT >= highT)))
+				{
+					FillErrorColor<TOutputColor, TOutputChannelValue>(output);
+					return;
+				}
+
 				// Constant color block, officially called a "void extent" block
 				TOutputColor c = default;
 
@@ -100,13 +111,9 @@ namespace AssetRipper.TextureDecoder.Astc
 				BlockData blockData = new();
 				blockData.bw = blockWidth;
 				blockData.bh = blockHeight;
-				DecodeBlockParameters(input, ref blockData);
-				if (blockData.weight_count > 64)
+				if (!DecodeBlockParameters(input, ref blockData))
 				{
-					// Opaque magenta is the ASTC LDR error color (Khronos ASTC spec C.2.5).
-					TOutputColor error = default;
-					error.SetConvertedChannels<TOutputColor, TOutputChannelValue, byte>(255, 0, 255, 255);
-					output[..(blockWidth * blockHeight)].Fill(error);
+					FillErrorColor<TOutputColor, TOutputChannelValue>(output);
 					return;
 				}
 				DecodeEndpoints(input, ref blockData);
@@ -119,8 +126,22 @@ namespace AssetRipper.TextureDecoder.Astc
 			}
 		}
 
-		private static void DecodeBlockParameters(ReadOnlySpan<byte> input, ref BlockData pBlock)
+		private static void FillErrorColor<TOutputColor, TOutputChannelValue>(Span<TOutputColor> output)
+			where TOutputChannelValue : unmanaged
+			where TOutputColor : unmanaged, IColor<TOutputChannelValue>
 		{
+			// Opaque magenta is the ASTC LDR error color (Khronos ASTC spec C.2.5).
+			TOutputColor error = default;
+			error.SetConvertedChannels<TOutputColor, TOutputChannelValue, byte>(255, 0, 255, 255);
+			output.Fill(error);
+		}
+
+		private static bool DecodeBlockParameters(ReadOnlySpan<byte> input, ref BlockData pBlock)
+		{
+			if ((input[0] & 0x0f) == 0 || ((input[0] & 0xc3) == 0xc0 && (input[1] & 1) != 0))
+			{
+				return false;
+			}
 			pBlock.dual_plane = (input[1] & 4) >> 2;
 			pBlock.weight_range = (input[0] >> 4 & 1) | (input[1] << 2 & 8);
 
@@ -196,6 +217,13 @@ namespace AssetRipper.TextureDecoder.Astc
 				5 => pBlock.weight_count * WeightPrecTableB[pBlock.weight_range] + (pBlock.weight_count * 7 + 2) / 3,
 				_ => pBlock.weight_count * WeightPrecTableB[pBlock.weight_range],
 			};
+			if ((pBlock.weight_range & 7) < 2 || pBlock.weight_count > 64
+				|| pBlock.width > pBlock.bw || pBlock.height > pBlock.bh
+				|| weight_bits is < 24 or > 96
+				|| (pBlock.dual_plane != 0 && pBlock.partition_count == 4))
+			{
+				return false;
+			}
 			if (pBlock.partition_count == 1)
 			{
 				pBlock.cem[0] = BinaryPrimitives.ReadInt32LittleEndian(input[1..]) >> 5 & 0xf;
@@ -256,6 +284,11 @@ namespace AssetRipper.TextureDecoder.Astc
 				pBlock.endpoint_value_num += (pBlock.cem[i] >> 1 & 6) + 2;
 			}
 
+			if (pBlock.endpoint_value_num > 18 || remain_bits < (13 * pBlock.endpoint_value_num + 4) / 5)
+			{
+				return false;
+			}
+
 			for (int i = 0, endpoint_bits; i < CemTableA.Length; i++)
 			{
 				endpoint_bits = CemTableA[i] switch
@@ -267,9 +300,10 @@ namespace AssetRipper.TextureDecoder.Astc
 				if (endpoint_bits <= remain_bits)
 				{
 					pBlock.cem_range = i;
-					break;
+					return true;
 				}
 			}
+			return false;
 		}
 
 		private static void DecodeEndpoints(ReadOnlySpan<byte> input, ref BlockData pBlock)

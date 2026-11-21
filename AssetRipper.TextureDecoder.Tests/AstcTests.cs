@@ -77,7 +77,7 @@ public sealed class AstcTests
 	}
 
 	[TestCase(new byte[16] { 83, 1, 147, 104, 198, 173, 55, 116, 182, 66, 105, 11, 102, 43, 148, 125 }, 8, 8, TestName = "GetBits Should not throw in DecodeIntseq")]
-	[TestCase(new byte[16] { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }, 8, 8, TestName = "Zero blocks should not throw", Description = "Blocks of all zeros are valid")]
+	[TestCase(new byte[16] { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }, 8, 8, TestName = "Zero blocks should not throw", Description = "All-zero blocks use a reserved block mode")]
 	[TestCase(new byte[16] { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF }, 8, 8, TestName = "0xFF blocks should not throw", Description = "Blocks with all bits set are invalid, but should be handled gracefully")]
 	[TestCase(new byte[16] { 0x60, 0x04, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }, 12, 12, TestName = "Invalid oversized dual-plane weight grid should not throw")]
 	public void DecodesBlockWithoutThrowing(byte[] block, int blockWidth, int blockHeight)
@@ -85,14 +85,31 @@ public sealed class AstcTests
 		Assert.DoesNotThrow(() => AstcDecoder.DecodeASTC<ColorBGRA<byte>, byte>(block, blockWidth, blockHeight, blockWidth, blockHeight, out _));
 	}
 
-	[Test]
-	public void InvalidOversizedWeightGridProducesErrorColor()
+	[TestCase(new byte[16] { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, 8, 8, TestName = "Reserved zero block mode")]
+	[TestCase(new byte[16] { 0xC4, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, 12, 12, TestName = "Reserved block mode")]
+	[TestCase(new byte[16] { 0x64, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, 12, 12, TestName = "More than 64 weights")]
+	[TestCase(new byte[16] { 0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, 4, 4, TestName = "Fewer than 24 weight bits")]
+	[TestCase(new byte[16] { 0x73, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, 8, 8, TestName = "More than 96 weight bits")]
+	[TestCase(new byte[16] { 0x46, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, 4, 4, TestName = "Weight grid exceeds footprint")]
+	[TestCase(new byte[16] { 0x42, 0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, 4, 4, TestName = "Four partitions with dual plane")]
+	[TestCase(new byte[16] { 0x42, 0x18, 0x00, 0x1E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, 4, 4, TestName = "More than 18 endpoint values")]
+	[TestCase(new byte[16] { 0x53, 0x12, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, 4, 4, TestName = "Insufficient endpoint bits")]
+	[TestCase(new byte[16] { 0xFC, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, 4, 4, TestName = "Void extent reserved bits")]
+	[TestCase(new byte[16] { 0xFC, 0x0D, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 }, 4, 4, TestName = "Void extent invalid coordinates")]
+	public void InvalidBlockProducesErrorColor(byte[] block, int blockWidth, int blockHeight)
 	{
-		byte[] block = [0x60, 0x04, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-		int bytesRead = AstcDecoder.DecodeASTC<ColorRGBA<byte>, byte>(block, 12, 12, 12, 12, out byte[] output);
-		byte[] expected = Enumerable.Range(0, 12 * 12).SelectMany(_ => new byte[] { 255, 0, 255, 255 }).ToArray();
+		int bytesRead = AstcDecoder.DecodeASTC<ColorRGBA<byte>, byte>(block, blockWidth, blockHeight, blockWidth, blockHeight, out byte[] output);
+		byte[] expected = Enumerable.Range(0, blockWidth * blockHeight).SelectMany(_ => new byte[] { 255, 0, 255, 255 }).ToArray();
 		Assert.That(bytesRead, Is.EqualTo(16));
 		Assert.That(output, Is.EqualTo(expected));
+	}
+
+	[Test]
+	public void DecodesVoidExtentWithValidCoordinates()
+	{
+		byte[] block = [0xFC, 0x0D, 0, 2, 0, 0, 8, 0, 0xFF, 0xFF, 0, 0, 0, 0, 0xFF, 0xFF];
+		AstcDecoder.DecodeASTC<ColorRGBA<byte>, byte>(block, 4, 4, 4, 4, out byte[] output);
+		Assert.That(output, Is.EqualTo(Enumerable.Range(0, 16).SelectMany(_ => new byte[] { 255, 0, 0, 255 }).ToArray()));
 	}
 
 	[TestCase(new byte[] { 0xFC, 0xFD, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0xFF, 0xFF }, TestName = "ASTC UNORM16 void extent rounds to FP16")]
