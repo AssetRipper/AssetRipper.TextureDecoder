@@ -100,9 +100,9 @@ namespace AssetRipper.TextureDecoder.Atc
 			where TOutputColor : unmanaged, IColor<TOutputChannelValue>
 		{
 			Span<int> colors = stackalloc int[16];
-			int c0 = input.ReadAtOffset<ushort>(0);
-			int c1 = input.ReadAtOffset<ushort>(2);
-			uint cindex = input.ReadAtOffset<uint>(4);
+			int c0 = BinaryPrimitives.ReadUInt16LittleEndian(input);
+			int c1 = BinaryPrimitives.ReadUInt16LittleEndian(input[2..]);
+			uint cindex = BinaryPrimitives.ReadUInt32LittleEndian(input[4..]);
 
 			DecodeColors(colors, c0, c1);
 
@@ -128,9 +128,9 @@ namespace AssetRipper.TextureDecoder.Atc
 			ulong aindex = avalue >> 16;
 
 			Span<int> colors = stackalloc int[16];
-			int c0 = input.ReadAtOffset<ushort>(8);
-			int c1 = input.ReadAtOffset<ushort>(10);
-			uint cindex = input.ReadAtOffset<uint>(12);
+			int c0 = BinaryPrimitives.ReadUInt16LittleEndian(input[8..]);
+			int c1 = BinaryPrimitives.ReadUInt16LittleEndian(input[10..]);
+			uint cindex = BinaryPrimitives.ReadUInt32LittleEndian(input[12..]);
 
 			DecodeColors(colors, c0, c1);
 			DecodeAlphas(alphas, a0, a1);
@@ -147,13 +147,6 @@ namespace AssetRipper.TextureDecoder.Atc
 				cindex >>= 2;
 				aindex >>= 3;
 			}
-		}
-
-		[MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
-		private static T ReadAtOffset<T>(this ReadOnlySpan<byte> input, int offset) where T : unmanaged
-		{
-			ThrowHelper.ThrowIfNotLittleEndian();
-			return MemoryMarshal.Read<T>(input.Slice(offset));
 		}
 
 		[MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
