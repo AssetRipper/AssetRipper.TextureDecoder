@@ -6,6 +6,10 @@ namespace AssetRipper.TextureDecoder.Astc
 {
 	public static partial class AstcDecoder
 	{
+		// ASTC HDR endpoints use 12-bit pseudo-logarithmic values (Khronos ASTC spec C.2.15).
+		private const int HdrOpaque = 0x780;
+		private const int HdrEndpointMax = 0xFFF;
+
 		private static void ValidateBlockDimension(int value, [CallerArgumentExpression(nameof(value))] string? paramName = null)
 		{
 			if (value < 4 || value > 12)
@@ -103,7 +107,7 @@ namespace AssetRipper.TextureDecoder.Astc
 				{
 					SelectPartition(input, ref blockData);
 				}
-				ApplicateColor<TOutputColor, TOutputChannelValue>(blockData, output);
+				ApplyColor<TOutputColor, TOutputChannelValue>(in blockData, output);
 			}
 		}
 
@@ -395,6 +399,27 @@ namespace AssetRipper.TextureDecoder.Astc
 							SetEndpoint(pBlock.endpoints[cem], l0, l0, l0, 255, l1, l1, l1, 255);
 						}
 						break;
+					case 2:
+						{
+							int v0 = v[0];
+							int v1 = v[1];
+							int l0 = v0 <= v1 ? v0 << 4 : (v1 << 4) + 8;
+							int l1 = v0 <= v1 ? v1 << 4 : (v0 << 4) - 8;
+							SetEndpoint(pBlock.endpoints[cem], l0, l0, l0, HdrOpaque, l1, l1, l1, HdrOpaque);
+						}
+						break;
+					case 3:
+						{
+							int v0 = v[0];
+							int v1 = v[1];
+							bool wideDelta = (v0 & 0x80) != 0;
+							int deltaMask = wideDelta ? 0x1F : 0x0F;
+							int shift = wideDelta ? 2 : 1;
+							int l0 = ((v1 & ~deltaMask) << 4) | ((v0 & 0x7F) << shift);
+							int l1 = int.Min(l0 + ((v1 & deltaMask) << shift), HdrEndpointMax);
+							SetEndpoint(pBlock.endpoints[cem], l0, l0, l0, HdrOpaque, l1, l1, l1, HdrOpaque);
+						}
+						break;
 					case 4:
 						SetEndpoint(pBlock.endpoints[cem], v[0], v[0], v[0], v[2], v[1], v[1], v[1], v[3]);
 						break;
@@ -406,6 +431,9 @@ namespace AssetRipper.TextureDecoder.Astc
 						break;
 					case 6:
 						SetEndpoint(pBlock.endpoints[cem], v[0] * v[3] >> 8, v[1] * v[3] >> 8, v[2] * v[3] >> 8, 255, v[0], v[1], v[2], 255);
+						break;
+					case 7:
+						DecodeHdrRgbOffset(v, pBlock.endpoints[cem]);
 						break;
 					case 8:
 						if (v[0] + v[2] + v[4] <= v[1] + v[3] + v[5])
@@ -435,6 +463,9 @@ namespace AssetRipper.TextureDecoder.Astc
 					case 10:
 						SetEndpoint(pBlock.endpoints[cem], v[0] * v[3] >> 8, v[1] * v[3] >> 8, v[2] * v[3] >> 8, v[4], v[0], v[1], v[2], v[5]);
 						break;
+					case 11:
+						DecodeHdrRgb(v, pBlock.endpoints[cem]);
+						break;
 					case 12:
 						if (v[0] + v[2] + v[4] <= v[1] + v[3] + v[5])
 						{
@@ -461,7 +492,157 @@ namespace AssetRipper.TextureDecoder.Astc
 						}
 
 						break;
+					case 14:
+						DecodeHdrRgb(v, pBlock.endpoints[cem]);
+						pBlock.endpoints[cem][3] = v[6];
+						pBlock.endpoints[cem][7] = v[7];
+						break;
+					case 15:
+						DecodeHdrRgb(v, pBlock.endpoints[cem]);
+						DecodeHdrAlpha(v[6], v[7], out pBlock.endpoints[cem][3], out pBlock.endpoints[cem][7]);
+						break;
 				}
+			}
+		}
+
+		private static void DecodeHdrRgbOffset(ReadOnlySpan<int> v, Span<int> endpoint)
+		{
+			int packedMode = (v[0] >> 6) | ((v[1] & 0x80) >> 5) | ((v[2] & 0x80) >> 4);
+			int mode = packedMode < 12 ? packedMode & 3 : packedMode == 15 ? 5 : 4;
+			int major = packedMode < 12 ? packedMode >> 2 : packedMode == 15 ? 0 : packedMode & 3;
+			Span<int> fields = [v[0] & 0x3F, v[1] & 0x1F, v[2] & 0x1F, v[3] & 0x1F];
+			int extra = ((v[1] & 0x40) >> 6)
+				| ((v[1] & 0x20) >> 4)
+				| ((v[2] & 0x40) >> 4)
+				| ((v[2] & 0x20) >> 2)
+				| ((v[3] & 0x80) >> 3)
+				| ((v[3] & 0x40) >> 1)
+				| ((v[3] & 0x20) << 1);
+
+			// Table C.2.20: destinations for X0 through X6, by endpoint bit mode.
+			const byte R = 0, G = 16, B = 32, S = 48;
+			ReadOnlySpan<byte> destinations =
+			[
+				R + 9, R + 8, R + 7, R + 10, R + 6, S + 6, S + 5,
+				R + 8, G + 5, R + 7, B + 5, R + 6, R + 10, R + 9,
+				R + 9, R + 8, R + 7, R + 6, S + 7, S + 6, S + 5,
+				R + 8, G + 5, R + 7, B + 5, R + 6, S + 6, S + 5,
+				G + 6, G + 5, B + 6, B + 5, R + 6, R + 7, S + 5,
+				G + 6, G + 5, B + 6, B + 5, R + 6, S + 6, S + 5,
+			];
+			UnpackHdrExtraBits(fields, extra, destinations.Slice(mode * 7, 7));
+			ReadOnlySpan<byte> shifts = [1, 1, 2, 3, 4, 5];
+			int shift = shifts[mode];
+			int r = fields[0] << shift;
+			int g = fields[1] << shift;
+			int b = fields[2] << shift;
+			int offset = fields[3] << shift;
+			if (mode != 5)
+			{
+				g = r - g;
+				b = r - b;
+			}
+			SetHdrRgbEndpoints(endpoint, major, r - offset, g - offset, b - offset, r, g, b);
+		}
+
+		private static void DecodeHdrRgb(ReadOnlySpan<int> v, Span<int> endpoint)
+		{
+			int major = ((v[4] & 0x80) >> 7) | ((v[5] & 0x80) >> 6);
+			if (major == 3)
+			{
+				SetEndpoint(endpoint, v[0] << 4, v[2] << 4, (v[4] & 0x7F) << 5, HdrOpaque, v[1] << 4, v[3] << 4, (v[5] & 0x7F) << 5, HdrOpaque);
+				return;
+			}
+
+			int mode = ((v[1] & 0x80) >> 7) | ((v[2] & 0x80) >> 6) | ((v[3] & 0x80) >> 5);
+			Span<int> fields =
+			[
+				v[0] | ((v[1] & 0x40) << 2),
+				v[2] & 0x3F,
+				v[3] & 0x3F,
+				v[1] & 0x3F,
+				v[4] & 0x1F,
+				v[5] & 0x1F
+			];
+			int extra = ((v[2] & 0x40) >> 6) | ((v[3] & 0x40) >> 5)
+				| ((v[4] & 0x40) >> 4) | ((v[5] & 0x40) >> 3)
+				| ((v[4] & 0x20) >> 1) | (v[5] & 0x20);
+
+			// Table C.2.23: destinations for X0 through X5, by endpoint bit mode.
+			const byte A = 0, B0 = 16, B1 = 32, C = 48, D0 = 64, D1 = 80;
+			ReadOnlySpan<byte> destinations =
+			[
+				B0 + 6, B1 + 6, D0 + 6, D1 + 6, D0 + 5, D1 + 5,
+				B0 + 6, B1 + 6, B0 + 7, B1 + 7, D0 + 5, D1 + 5,
+				A + 9, C + 6, D0 + 6, D1 + 6, D0 + 5, D1 + 5,
+				B0 + 6, B1 + 6, A + 9, C + 6, D0 + 5, D1 + 5,
+				B0 + 6, B1 + 6, B0 + 7, B1 + 7, A + 9, A + 10,
+				A + 9, A + 10, C + 7, C + 6, D0 + 5, D1 + 5,
+				B0 + 6, B1 + 6, A + 11, C + 6, A + 9, A + 10,
+				A + 9, A + 10, A + 11, C + 6, D0 + 5, D1 + 5,
+			];
+			UnpackHdrExtraBits(fields, extra, destinations.Slice(mode * 6, 6));
+			ReadOnlySpan<byte> deltaWidths = [7, 6, 7, 6, 5, 6, 5, 6];
+			int d0 = SignExtendHdrDelta(fields[4], deltaWidths[mode]);
+			int d1 = SignExtendHdrDelta(fields[5], deltaWidths[mode]);
+			int shift = 3 - (mode >> 1);
+			int r1 = fields[0];
+			int g1 = r1 - fields[1];
+			int b1 = r1 - fields[2];
+			int c = fields[3];
+			SetHdrRgbEndpoints(endpoint, major, (r1 - c) << shift, (g1 - c - d0) << shift, (b1 - c - d1) << shift, r1 << shift, g1 << shift, b1 << shift);
+		}
+
+		private static void DecodeHdrAlpha(int v0, int v1, out int a0, out int a1)
+		{
+			int mode = ((v0 & 0x80) >> 7) | ((v1 & 0x80) >> 6);
+			v0 &= 0x7F;
+			v1 &= 0x7F;
+			if (mode == 3)
+			{
+				a0 = v0 << 5;
+				a1 = v1 << 5;
+				return;
+			}
+
+			int shift = 4 - mode;
+			int deltaWidth = 6 - mode;
+			a0 = (v0 | ((v1 << (mode + 1)) & 0x780)) << shift;
+			int delta = SignExtendHdrDelta(v1 & ((1 << deltaWidth) - 1), deltaWidth);
+			a1 = int.Clamp(a0 + (delta << shift), 0, HdrEndpointMax);
+		}
+
+		private static int SignExtendHdrDelta(int value, int width)
+		{
+			int sign = 1 << (width - 1);
+			return (value ^ sign) - sign;
+		}
+
+		private static void UnpackHdrExtraBits(Span<int> fields, int extra, ReadOnlySpan<byte> destinations)
+		{
+			for (int i = 0; i < destinations.Length; i++)
+			{
+				int destination = destinations[i];
+				fields[destination >> 4] |= ((extra >> i) & 1) << (destination & 15);
+			}
+		}
+
+		private static void SetHdrRgbEndpoints(Span<int> endpoint, int major, int r0, int g0, int b0, int r1, int g1, int b1)
+		{
+			SetEndpoint(
+				endpoint,
+				int.Clamp(r0, 0, HdrEndpointMax),
+				int.Clamp(g0, 0, HdrEndpointMax),
+				int.Clamp(b0, 0, HdrEndpointMax),
+				HdrOpaque,
+				int.Clamp(r1, 0, HdrEndpointMax),
+				int.Clamp(g1, 0, HdrEndpointMax),
+				int.Clamp(b1, 0, HdrEndpointMax),
+				HdrOpaque);
+			if (major != 0)
+			{
+				(endpoint[0], endpoint[major]) = (endpoint[major], endpoint[0]);
+				(endpoint[4], endpoint[4 + major]) = (endpoint[4 + major], endpoint[4]);
 			}
 		}
 
@@ -703,71 +884,69 @@ namespace AssetRipper.TextureDecoder.Astc
 			}
 		}
 
-		private static void ApplicateColor<TOutputColor, TOutputChannelValue>(BlockData block, Span<TOutputColor> output)
+		private static void ApplyColor<TOutputColor, TOutputChannelValue>(in BlockData block, Span<TOutputColor> output)
 			where TOutputChannelValue : unmanaged
 			where TOutputColor : unmanaged, IColor<TOutputChannelValue>
 		{
+			Span<int> planeOffsets = [0, 0, 0, 0];
 			if (block.dual_plane != 0)
 			{
-				Span<int> ps = [0, 0, 0, 0];
-				ps[block.plane_selector] = 1;
-				if (block.partition_count > 1)
+				planeOffsets[block.plane_selector] = 1;
+			}
+			for (int i = 0; i < block.bw * block.bh; i++)
+			{
+				int partition = block.partition_count > 1 ? block.partition[i] : 0;
+				int mode = block.cem[partition];
+				ReadOnlySpan<int> endpoint = block.endpoints[partition];
+				int weightIndex = i * 2;
+				TOutputChannelValue r = SelectColor(endpoint[0], endpoint[4], block.weights[weightIndex + planeOffsets[0]], mode, false);
+				TOutputChannelValue g = SelectColor(endpoint[1], endpoint[5], block.weights[weightIndex + planeOffsets[1]], mode, false);
+				TOutputChannelValue b = SelectColor(endpoint[2], endpoint[6], block.weights[weightIndex + planeOffsets[2]], mode, false);
+				TOutputChannelValue a = SelectColor(endpoint[3], endpoint[7], block.weights[weightIndex + planeOffsets[3]], mode, true);
+				output[i].SetChannels(r, g, b, a);
+			}
+
+			static TOutputChannelValue SelectColor(int v0, int v1, int weight, int mode, bool alpha)
+			{
+				Debug.Assert(weight is >= 0 and <= 64);
+				if (mode is 14 && alpha)
 				{
-					for (int i = 0; i < block.bw * block.bh; i++)
-					{
-						int p = block.partition[i];
-						TOutputChannelValue r = SelectColor(block.endpoints[p][0], block.endpoints[p][4], block.weights[i * 2 + ps[0]]);
-						TOutputChannelValue g = SelectColor(block.endpoints[p][1], block.endpoints[p][5], block.weights[i * 2 + ps[1]]);
-						TOutputChannelValue b = SelectColor(block.endpoints[p][2], block.endpoints[p][6], block.weights[i * 2 + ps[2]]);
-						TOutputChannelValue a = SelectColor(block.endpoints[p][3], block.endpoints[p][7], block.weights[i * 2 + ps[3]]);
-						output[i].SetChannels(r, g, b, a);
-					}
+					// Mode 14 alpha uses UNORM interpolation followed by FP16 rounding toward zero.
+
+					Debug.Assert(v0 is >= byte.MinValue and <= byte.MaxValue);
+					Debug.Assert(v1 is >= byte.MinValue and <= byte.MaxValue);
+					int v0Weighted = (v0 << 8 | v0) * (64 - weight);
+					int v1Weighted = (v1 << 8 | v1) * weight;
+					ushort interpolated = (ushort)((v0Weighted + v1Weighted + 32) >> 6);
+
+					float normalized = interpolated == ushort.MaxValue ? 1f : interpolated / 65536f;
+					Half rounded = (Half)normalized;
+					Half result = (float)rounded > normalized ? Half.BitDecrement(rounded) : rounded;
+					return NumericConversion.Convert<Half, TOutputChannelValue>(result);
+				}
+				else if (mode is 2 or 3 or 7 or 11 or 14 or 15)
+				{
+					Debug.Assert(v0 is >= 0 and <= HdrEndpointMax);
+					Debug.Assert(v1 is >= 0 and <= HdrEndpointMax);
+					int interpolated = ((v0 << 4) * (64 - weight) + (v1 << 4) * weight + 32) >> 6;
+
+					// Convert the interpolated logarithmic integer to IEEE binary16 (C.2.19).
+					int mantissa = interpolated & 0x7FF;
+					int adjusted = mantissa < 512 ? 3 * mantissa : mantissa < 1536 ? 4 * mantissa - 512 : 5 * mantissa - 2048;
+					int halfBits = ((interpolated & 0xF800) >> 1) | (adjusted >> 3);
+					Half value = BitConverter.UInt16BitsToHalf((ushort)int.Min(halfBits, 0x7BFF));
+
+					return NumericConversion.Convert<Half, TOutputChannelValue>(value);
 				}
 				else
 				{
-					for (int i = 0; i < block.bw * block.bh; i++)
-					{
-						TOutputChannelValue r = SelectColor(block.endpoints[0][0], block.endpoints[0][4], block.weights[i * 2 + ps[0]]);
-						TOutputChannelValue g = SelectColor(block.endpoints[0][1], block.endpoints[0][5], block.weights[i * 2 + ps[1]]);
-						TOutputChannelValue b = SelectColor(block.endpoints[0][2], block.endpoints[0][6], block.weights[i * 2 + ps[2]]);
-						TOutputChannelValue a = SelectColor(block.endpoints[0][3], block.endpoints[0][7], block.weights[i * 2 + ps[3]]);
-						output[i].SetChannels(r, g, b, a);
-					}
+					Debug.Assert(v0 is >= byte.MinValue and <= byte.MaxValue);
+					Debug.Assert(v1 is >= byte.MinValue and <= byte.MaxValue);
+					int v0Weighted = (v0 << 8 | v0) * (64 - weight);
+					int v1Weighted = (v1 << 8 | v1) * weight;
+					ushort interpolated = (ushort)((v0Weighted + v1Weighted + 32) >> 6);
+					return NumericConversion.Convert<ushort, TOutputChannelValue>(interpolated);
 				}
-			}
-			else if (block.partition_count > 1)
-			{
-				for (int i = 0; i < block.bw * block.bh; i++)
-				{
-					int p = block.partition[i];
-					TOutputChannelValue r = SelectColor(block.endpoints[p][0], block.endpoints[p][4], block.weights[i * 2]);
-					TOutputChannelValue g = SelectColor(block.endpoints[p][1], block.endpoints[p][5], block.weights[i * 2]);
-					TOutputChannelValue b = SelectColor(block.endpoints[p][2], block.endpoints[p][6], block.weights[i * 2]);
-					TOutputChannelValue a = SelectColor(block.endpoints[p][3], block.endpoints[p][7], block.weights[i * 2]);
-					output[i].SetChannels(r, g, b, a);
-				}
-			}
-			else
-			{
-				for (int i = 0; i < block.bw * block.bh; i++)
-				{
-					TOutputChannelValue r = SelectColor(block.endpoints[0][0], block.endpoints[0][4], block.weights[i * 2]);
-					TOutputChannelValue g = SelectColor(block.endpoints[0][1], block.endpoints[0][5], block.weights[i * 2]);
-					TOutputChannelValue b = SelectColor(block.endpoints[0][2], block.endpoints[0][6], block.weights[i * 2]);
-					TOutputChannelValue a = SelectColor(block.endpoints[0][3], block.endpoints[0][7], block.weights[i * 2]);
-					output[i].SetChannels(r, g, b, a);
-				}
-			}
-
-			static TOutputChannelValue SelectColor(int v0, int v1, int weight)
-			{
-				Debug.Assert(weight is >= 0 and <= 64);
-				Debug.Assert(v0 is >= byte.MinValue and <= byte.MaxValue);
-				Debug.Assert(v1 is >= byte.MinValue and <= byte.MaxValue);
-				int v0_weighted = (v0 << 8 | v0) * (64 - weight);
-				int v1_weighted = (v1 << 8 | v1) * weight;
-				ushort value = (ushort)(v0_weighted + v1_weighted + 32 >> 6);
-				return NumericConversion.Convert<ushort, TOutputChannelValue>(value);
 			}
 		}
 
