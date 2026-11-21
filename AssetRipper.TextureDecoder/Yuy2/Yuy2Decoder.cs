@@ -2,11 +2,17 @@ using AssetRipper.TextureDecoder.Rgb;
 
 namespace AssetRipper.TextureDecoder.Yuy2
 {
+	/// <summary>
+	/// Provides methods for decompressing YUY2 images into various color formats.<br/>
+	/// <see href="https://en.wikipedia.org/wiki/YUV"/><br/>
+	/// <see href="https://learn.microsoft.com/en-us/windows/win32/medfound/about-yuv-video"/>
+	/// </summary>
 	public static class Yuy2Decoder
 	{
 		/// <summary>
 		/// Decompress a YUY2 image
 		/// </summary>
+		/// <remarks>Input is interpreted as limited-range BT.601 Y'CbCr; output is nonlinear RGB.</remarks>
 		/// <typeparam name="TOutputColor">The <see cref="IColor{T}"/> type used for each pixel.</typeparam>
 		/// <typeparam name="TOutputChannelValue">The channel type used in <typeparamref name="TOutputColor"/>.</typeparam>
 		/// <param name="input">Input buffer containing the compressed image.</param>
@@ -25,6 +31,7 @@ namespace AssetRipper.TextureDecoder.Yuy2
 		/// <summary>
 		/// Decompress a YUY2 image
 		/// </summary>
+		/// <remarks>Input is interpreted as limited-range BT.601 Y'CbCr; output is nonlinear RGB.</remarks>
 		/// <typeparam name="TOutputColor">The <see cref="IColor{T}"/> type used for each pixel.</typeparam>
 		/// <typeparam name="TOutputChannelValue">The channel type used in <typeparamref name="TOutputColor"/>.</typeparam>
 		/// <param name="input">Input buffer containing the compressed image.</param>
@@ -43,6 +50,7 @@ namespace AssetRipper.TextureDecoder.Yuy2
 		/// <summary>
 		/// Decompress a YUY2 image
 		/// </summary>
+		/// <remarks>Input is interpreted as limited-range BT.601 Y'CbCr; output is nonlinear RGB.</remarks>
 		/// <typeparam name="TOutputColor">The <see cref="IColor{T}"/> type used for each pixel.</typeparam>
 		/// <typeparam name="TOutputChannelValue">The channel type used in <typeparamref name="TOutputColor"/>.</typeparam>
 		/// <param name="input">Input buffer containing the compressed image.</param>
@@ -70,19 +78,39 @@ namespace AssetRipper.TextureDecoder.Yuy2
 					int c = y0 - 16;
 					int d = u0 - 128;
 					int e = v0 - 128;
-					byte b0 = ClampByte((298 * c + 516 * d + 128) >> 8);            // blue
-					byte g0 = ClampByte((298 * c - 100 * d - 208 * e + 128) >> 8);  // green
-					byte r0 = ClampByte((298 * c + 409 * e + 128) >> 8);            // red
-					output[o++].SetConvertedChannels<TOutputColor, TOutputChannelValue, byte>(r0, g0, b0);
-					c = y1 - 16;
-					byte b1 = ClampByte((298 * c + 516 * d + 128) >> 8);            // blue
-					byte g1 = ClampByte((298 * c - 100 * d - 208 * e + 128) >> 8);  // green
-					byte r1 = ClampByte((298 * c + 409 * e + 128) >> 8);            // red
-					output[o++].SetConvertedChannels<TOutputColor, TOutputChannelValue, byte>(r1, g1, b1);
+					if (typeof(TOutputChannelValue) == typeof(byte))
+					{
+						SetByteColor(ref output[o++], c, d, e);
+						SetByteColor(ref output[o++], y1 - 16, d, e);
+					}
+					else
+					{
+						SetPreciseColor(ref output[o++], c, d, e);
+						SetPreciseColor(ref output[o++], y1 - 16, d, e);
+					}
 				}
 			}
 
 			return p;
+
+			static void SetByteColor(ref TOutputColor color, int c, int d, int e)
+			{
+				byte b = ClampByte((298 * c + 516 * d + 128) >> 8);
+				byte g = ClampByte((298 * c - 100 * d - 208 * e + 128) >> 8);
+				byte r = ClampByte((298 * c + 409 * e + 128) >> 8);
+				color.SetConvertedChannels<TOutputColor, TOutputChannelValue, byte>(r, g, b);
+			}
+
+			static void SetPreciseColor(ref TOutputColor color, int c, int d, int e)
+			{
+				double y = c / 219.0;
+				double cb = d / 224.0;
+				double cr = e / 224.0;
+				double r = double.Clamp(y + 1.402 * cr, 0, 1);
+				double g = double.Clamp(y - (0.114 * 1.772 / 0.587) * cb - (0.299 * 1.402 / 0.587) * cr, 0, 1);
+				double b = double.Clamp(y + 1.772 * cb, 0, 1);
+				color.SetConvertedChannels<TOutputColor, TOutputChannelValue, double>(r, g, b);
+			}
 		}
 
 		[MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
