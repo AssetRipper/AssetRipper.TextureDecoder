@@ -951,19 +951,7 @@ namespace AssetRipper.TextureDecoder.Astc
 			static TOutputChannelValue SelectColor(int v0, int v1, int weight, int mode, bool alpha)
 			{
 				Debug.Assert(weight is >= 0 and <= 64);
-				if (mode is 14 && alpha)
-				{
-					// Mode 14 alpha uses UNORM interpolation followed by FP16 rounding toward zero.
-
-					Debug.Assert(v0 is >= byte.MinValue and <= byte.MaxValue);
-					Debug.Assert(v1 is >= byte.MinValue and <= byte.MaxValue);
-					int v0Weighted = (v0 << 8 | v0) * (64 - weight);
-					int v1Weighted = (v1 << 8 | v1) * weight;
-					ushort interpolated = (ushort)((v0Weighted + v1Weighted + 32) >> 6);
-
-					return NumericConversion.Convert<Half, TOutputChannelValue>(Unorm16ToHalf(interpolated));
-				}
-				else if (mode is 2 or 3 or 7 or 11 or 14 or 15)
+				if (mode is 2 or 3 or 7 or 11 or 15 || (mode == 14 && !alpha))
 				{
 					Debug.Assert(v0 is >= 0 and <= HdrEndpointMax);
 					Debug.Assert(v1 is >= 0 and <= HdrEndpointMax);

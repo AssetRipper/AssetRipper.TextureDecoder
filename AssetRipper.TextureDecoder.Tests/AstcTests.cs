@@ -126,6 +126,17 @@ public sealed class AstcTests
 	}
 
 	[Test]
+	public void DecodesHdrRgbLdrAlphaToIntegerChannels()
+	{
+		byte[] block = [0x42, 0xC0, 0x01, 0x21, 0x21, 0x41, 0xA1, 0xB1, 0x13, 0x12, 0x00, 0x00, 0x27, 0x27, 0x27, 0x27];
+		AstcDecoder.DecodeASTC<ColorRGBA<byte>, byte>(block, 4, 4, 4, 4, out byte[] bytes);
+		AstcDecoder.DecodeASTC<ColorRGBA<ushort>, ushort>(block, 4, 4, 4, 4, out byte[] shorts);
+
+		Assert.That(bytes.Where((_, i) => i % 4 == 3), Is.All.EqualTo((byte)9));
+		Assert.That(MemoryMarshal.Cast<byte, ushort>(shorts.AsSpan()).ToArray().Where((_, i) => i % 4 == 3), Is.All.EqualTo((ushort)0x0909));
+	}
+
+	[Test]
 	public void DecodesUnormVoidExtentBoundaries()
 	{
 		byte[] block = [0xFC, 0xFD, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 1, 0, 0xFF, 0xFF, 9, 9];
