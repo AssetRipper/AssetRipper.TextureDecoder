@@ -9,6 +9,8 @@ namespace AssetRipper.TextureDecoder.Atc
 			where TOutputChannelValue : unmanaged
 			where TOutputColor : unmanaged, IColor<TOutputChannelValue>
 		{
+			ArgumentOutOfRangeException.ThrowIfNegative(width);
+			ArgumentOutOfRangeException.ThrowIfNegative(height);
 			output = new byte[width * height * Unsafe.SizeOf<TOutputColor>()];
 			return DecompressAtcRgb4<TOutputColor, TOutputChannelValue>(input, width, height, output);
 		}
@@ -25,6 +27,8 @@ namespace AssetRipper.TextureDecoder.Atc
 			where TOutputChannelValue : unmanaged
 			where TOutputColor : unmanaged, IColor<TOutputChannelValue>
 		{
+			ArgumentOutOfRangeException.ThrowIfNegative(width);
+			ArgumentOutOfRangeException.ThrowIfNegative(height);
 			ThrowHelper.ThrowIfNotEnoughSpace(output.Length, width * height);
 			int bcw = (width + 3) / 4;
 			int bch = (height + 3) / 4;
@@ -54,6 +58,8 @@ namespace AssetRipper.TextureDecoder.Atc
 			where TOutputChannelValue : unmanaged
 			where TOutputColor : unmanaged, IColor<TOutputChannelValue>
 		{
+			ArgumentOutOfRangeException.ThrowIfNegative(width);
+			ArgumentOutOfRangeException.ThrowIfNegative(height);
 			output = new byte[width * height * Unsafe.SizeOf<TOutputColor>()];
 			return DecompressAtcRgba8<TOutputColor, TOutputChannelValue>(input, width, height, output);
 		}
@@ -70,6 +76,8 @@ namespace AssetRipper.TextureDecoder.Atc
 			where TOutputChannelValue : unmanaged
 			where TOutputColor : unmanaged, IColor<TOutputChannelValue>
 		{
+			ArgumentOutOfRangeException.ThrowIfNegative(width);
+			ArgumentOutOfRangeException.ThrowIfNegative(height);
 			ThrowHelper.ThrowIfNotEnoughSpace(output.Length, width * height);
 			int bcw = (width + 3) / 4;
 			int bch = (height + 3) / 4;
