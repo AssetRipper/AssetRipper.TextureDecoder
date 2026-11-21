@@ -79,9 +79,49 @@ public sealed class AstcTests
 	[TestCase(new byte[16] { 83, 1, 147, 104, 198, 173, 55, 116, 182, 66, 105, 11, 102, 43, 148, 125 }, 8, 8, TestName = "GetBits Should not throw in DecodeIntseq")]
 	[TestCase(new byte[16] { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }, 8, 8, TestName = "Zero blocks should not throw", Description = "Blocks of all zeros are valid")]
 	[TestCase(new byte[16] { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF }, 8, 8, TestName = "0xFF blocks should not throw", Description = "Blocks with all bits set are invalid, but should be handled gracefully")]
+	[TestCase(new byte[16] { 0x60, 0x04, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }, 12, 12, TestName = "Invalid oversized dual-plane weight grid should not throw")]
 	public void DecodesBlockWithoutThrowing(byte[] block, int blockWidth, int blockHeight)
 	{
 		Assert.DoesNotThrow(() => AstcDecoder.DecodeASTC<ColorBGRA<byte>, byte>(block, blockWidth, blockHeight, blockWidth, blockHeight, out _));
+	}
+
+	[Test]
+	public void InvalidOversizedWeightGridProducesErrorColor()
+	{
+		byte[] block = [0x60, 0x04, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+		int bytesRead = AstcDecoder.DecodeASTC<ColorRGBA<byte>, byte>(block, 12, 12, 12, 12, out byte[] output);
+		byte[] expected = Enumerable.Range(0, 12 * 12).SelectMany(_ => new byte[] { 255, 0, 255, 255 }).ToArray();
+		Assert.That(bytesRead, Is.EqualTo(16));
+		Assert.That(output, Is.EqualTo(expected));
+	}
+
+	[TestCase(new byte[] { 0xFC, 0xFD, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x09, 0x09, 0x09, 0x09, 0x09, 0x09, 0xFF, 0xFF }, TestName = "ASTC UNORM16 void extent rounds to FP16")]
+	[TestCase(new byte[] { 0x42, 0x00, 0x12, 0x12, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x27, 0x27, 0x27, 0x27 }, TestName = "ASTC LDR luminance rounds to FP16")]
+	public void DecodesLdrBlockToHalfPrecision(byte[] block)
+	{
+		byte[] texel = [0x84, 0x28, 0x84, 0x28, 0x84, 0x28, 0x00, 0x3C];
+		byte[] expected = new byte[16 * texel.Length];
+		for (int i = 0; i < 16; i++)
+		{
+			texel.CopyTo(expected, i * texel.Length);
+		}
+		AssertBlock(block, expected);
+	}
+
+	[Test]
+	public void DecodesUnormVoidExtentBoundaries()
+	{
+		byte[] block = [0xFC, 0xFD, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 1, 0, 0xFF, 0xFF, 9, 9];
+		byte[] texel = [0, 0, 0, 1, 0, 0x3C, 0x84, 0x28];
+		byte[] expected = new byte[16 * texel.Length];
+		for (int i = 0; i < 16; i++)
+		{
+			texel.CopyTo(expected, i * texel.Length);
+		}
+		AssertBlock(block, expected);
+
+		AstcDecoder.DecodeASTC<ColorRGBA<ushort>, ushort>(block, 4, 4, 4, 4, out byte[] integerOutput);
+		Assert.That(integerOutput.AsSpan(0, 8).ToArray(), Is.EqualTo(block.AsSpan(8, 8).ToArray()));
 	}
 
 	// Each 4x4 block repeats the same row. Expected RGBA16F bytes come from astcenc 5.7.1 (-dH, DDS).

@@ -2,9 +2,15 @@
 public static partial class NumericConversion
 {
 	[MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
+	internal static bool IsFloatingPoint<T>() where T : unmanaged
+	{
+		return typeof(T) == typeof(Half) || typeof(T) == typeof(float) || typeof(T) == typeof(NFloat) || typeof(T) == typeof(double) || typeof(T) == typeof(decimal);
+	}
+
+	[MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
 	internal static T GetMinimumValueSafe<T>() where T : unmanaged, INumberBase<T>, IMinMaxValue<T>
 	{
-		return typeof(T) == typeof(Half) || typeof(T) == typeof(float) || typeof(T) == typeof(NFloat) || typeof(T) == typeof(double) || typeof(T) == typeof(decimal)
+		return IsFloatingPoint<T>()
 			? T.Zero
 			: T.MinValue;
 	}
@@ -12,7 +18,7 @@ public static partial class NumericConversion
 	[MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
 	internal static T GetMaximumValueSafe<T>() where T : unmanaged, INumberBase<T>, IMinMaxValue<T>
 	{
-		return typeof(T) == typeof(Half) || typeof(T) == typeof(float) || typeof(T) == typeof(NFloat) || typeof(T) == typeof(double) || typeof(T) == typeof(decimal)
+		return IsFloatingPoint<T>()
 			? T.One
 			: T.MaxValue;
 	}

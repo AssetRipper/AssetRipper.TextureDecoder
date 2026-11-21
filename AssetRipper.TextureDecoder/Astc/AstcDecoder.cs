@@ -78,11 +78,11 @@ namespace AssetRipper.TextureDecoder.Astc
 				if ((input[1] & 2) == 0)
 				{
 					// U16
-					c.SetConvertedChannels<TOutputColor, TOutputChannelValue, ushort>(
-						BinaryPrimitives.ReadUInt16LittleEndian(input[8..]),
-						BinaryPrimitives.ReadUInt16LittleEndian(input[10..]),
-						BinaryPrimitives.ReadUInt16LittleEndian(input[12..]),
-						BinaryPrimitives.ReadUInt16LittleEndian(input[14..]));
+					c.SetChannels(
+						ConvertUnorm16<TOutputChannelValue>(BinaryPrimitives.ReadUInt16LittleEndian(input[8..])),
+						ConvertUnorm16<TOutputChannelValue>(BinaryPrimitives.ReadUInt16LittleEndian(input[10..])),
+						ConvertUnorm16<TOutputChannelValue>(BinaryPrimitives.ReadUInt16LittleEndian(input[12..])),
+						ConvertUnorm16<TOutputChannelValue>(BinaryPrimitives.ReadUInt16LittleEndian(input[14..])));
 				}
 				else
 				{
@@ -101,6 +101,14 @@ namespace AssetRipper.TextureDecoder.Astc
 				blockData.bw = blockWidth;
 				blockData.bh = blockHeight;
 				DecodeBlockParameters(input, ref blockData);
+				if (blockData.weight_count > 64)
+				{
+					// Opaque magenta is the ASTC LDR error color (Khronos ASTC spec C.2.5).
+					TOutputColor error = default;
+					error.SetConvertedChannels<TOutputColor, TOutputChannelValue, byte>(255, 0, 255, 255);
+					output[..(blockWidth * blockHeight)].Fill(error);
+					return;
+				}
 				DecodeEndpoints(input, ref blockData);
 				DecodeWeights(input, ref blockData);
 				if (blockData.partition_count > 1)
@@ -919,10 +927,7 @@ namespace AssetRipper.TextureDecoder.Astc
 					int v1Weighted = (v1 << 8 | v1) * weight;
 					ushort interpolated = (ushort)((v0Weighted + v1Weighted + 32) >> 6);
 
-					float normalized = interpolated == ushort.MaxValue ? 1f : interpolated / 65536f;
-					Half rounded = (Half)normalized;
-					Half result = (float)rounded > normalized ? Half.BitDecrement(rounded) : rounded;
-					return NumericConversion.Convert<Half, TOutputChannelValue>(result);
+					return NumericConversion.Convert<Half, TOutputChannelValue>(Unorm16ToHalf(interpolated));
 				}
 				else if (mode is 2 or 3 or 7 or 11 or 14 or 15)
 				{
@@ -945,9 +950,25 @@ namespace AssetRipper.TextureDecoder.Astc
 					int v0Weighted = (v0 << 8 | v0) * (64 - weight);
 					int v1Weighted = (v1 << 8 | v1) * weight;
 					ushort interpolated = (ushort)((v0Weighted + v1Weighted + 32) >> 6);
-					return NumericConversion.Convert<ushort, TOutputChannelValue>(interpolated);
+					return ConvertUnorm16<TOutputChannelValue>(interpolated);
 				}
 			}
+		}
+
+		private static T ConvertUnorm16<T>(ushort value) where T : unmanaged
+		{
+			return NumericConversion.IsFloatingPoint<T>()
+				? NumericConversion.Convert<Half, T>(Unorm16ToHalf(value))
+				: NumericConversion.Convert<ushort, T>(value);
+		}
+
+		private static Half Unorm16ToHalf(ushort value)
+		{
+			// UNORM 16 to floating-point conversion is calculated exactly like this
+			// because any deviation would violate the official ASTC specification.
+			float normalized = value == ushort.MaxValue ? 1f : value / 65536f;
+			Half rounded = (Half)normalized;
+			return (float)rounded > normalized ? Half.BitDecrement(rounded) : rounded;
 		}
 
 		private static void DecodeIntseq(ReadOnlySpan<byte> input, int offset, int a, int b, int count, bool reverse, Span<IntSeqData> _out)
